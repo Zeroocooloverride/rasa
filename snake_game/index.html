@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snake Game (Local Assets)</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    #game-container {
+      width: 100vw;
+      height: 100vh;
+    }
+    #controls {
+      position: absolute;
+      bottom: 10px;
+      width: 100%;
+      display: flex;
+      justify-content: space-around;
+      pointer-events: none;
+    }
+    #controls button {
+      padding: 20px;
+      font-size: 1.4rem;
+      background-color: #33ff33;
+      color: #000;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      pointer-events: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container"></div>
+  <div id="controls">
+    <button id="up-btn">▲</button>
+    <button id="left-btn">◀</button>
+    <button id="right-btn">▶</button>
+    <button id="down-btn">▼</button>
+  </div>
+  <script>
+    function launchGame() {
+      const config = {
+        type: Phaser.AUTO,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        parent: "game-container",
+        scene: { preload, create, update },
+        backgroundColor: "#0d0d0d",
+        pixelArt: true,
+        scale: {
+          mode: Phaser.Scale.RESIZE,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+        },
+      };
+
+      const game = new Phaser.Game(config);
+
+      let snake = [];
+      let food;
+      let foodRect;
+      let obstacles = [];
+      let dir = { x: 1, y: 0 };
+      let pendingDir = null;
+      let speed = 1.5;
+      let elapsed = 0;
+      let segmentSize = 20;
+      let level = 1;
+      let eaten = 0;
+      let foodsToNextLevel = 10;
+
+      function preload() {
+        // No external assets are loaded; we use geometric shapes instead.
+      }
+
+      function create() {
+        this.graphics = this.add.graphics();
+        this.snakeGroup = this.add.group();
+
+        resetGame.call(this);
+
+        document.getElementById("up-btn").addEventListener("pointerdown", () => {
+          if (dir.y !== 1) pendingDir = { x: 0, y: -1 };
+        });
+        document.getElementById("down-btn").addEventListener("pointerdown", () => {
+          if (dir.y !== -1) pendingDir = { x: 0, y: 1 };
+        });
+        document.getElementById("left-btn").addEventListener("pointerdown", () => {
+          if (dir.x !== 1) pendingDir = { x: -1, y: 0 };
+        });
+        document.getElementById("right-btn").addEventListener("pointerdown", () => {
+          if (dir.x !== -1) pendingDir = { x: 1, y: 0 };
+        });
+
+        this.input.keyboard.on("keydown", (e) => {
+          if (e.key === "ArrowUp" && dir.y !== 1) pendingDir = { x: 0, y: -1 };
+          else if (e.key === "ArrowDown" && dir.y !== -1) pendingDir = { x: 0, y: 1 };
+          else if (e.key === "ArrowLeft" && dir.x !== 1) pendingDir = { x: -1, y: 0 };
+          else if (e.key === "ArrowRight" && dir.x !== -1) pendingDir = { x: 1, y: 0 };
+        });
+
+        this.scale.on("resize", (gameSize) => {
+          this.cameras.resize(gameSize.width, gameSize.height);
+          segmentSize = Math.max(15, Math.floor(Math.min(gameSize.width, gameSize.height) / 25));
+        });
+      }
+
+      function resetGame() {
+        segmentSize = Math.max(15, Math.floor(Math.min(this.scale.width, this.scale.height) / 25));
+        foodsToNextLevel = 10 + (level - 1) * 2;
+        speed = 1.5 + level * 0.5;
+        dir = { x: 1, y: 0 };
+        pendingDir = null;
+        eaten = 0;
+        elapsed = 0;
+
+        snake = [];
+        for (let i = 0; i < 2 + level; i++) {
+          snake.push({ x: Math.floor(this.scale.width / segmentSize / 2) - i, y: Math.floor(this.scale.height / segmentSize / 2) });
+        }
+        this.snakeGroup.clear(true, true);
+
+        generateObstacles.call(this);
+        placeFood.call(this);
+        drawScene.call(this);
+      }
+
+      function generateObstacles() {
+        obstacles = [];
+        if (level < 3) return;
+        const count = Math.min(level, 10);
+        for (let i = 0; i < count; i++) {
+          let obs;
+          do {
+            obs = {
+              x: Phaser.Math.Between(1, Math.floor(this.scale.width / segmentSize) - 5),
+              y: Phaser.Math.Between(1, Math.floor(this.scale.height / segmentSize) - 5),
+              w: Phaser.Math.Between(3, 8),
+              h: Phaser.Math.Between(3, 6),
+            };
+          } while (snake.some((s) => s.x >= obs.x && s.x < obs.x + obs.w && s.y >= obs.y && s.y < obs.y + obs.h));
+          obstacles.push(obs);
+        }
+      }
+
+      function placeFood() {
+        do {
+          food = {
+            x: Phaser.Math.Between(0, Math.floor(this.scale.width / segmentSize) - 1),
+            y: Phaser.Math.Between(0, Math.floor(this.scale.height / segmentSize) - 1),
+          };
+        } while (
+          snake.some((s) => s.x === food.x && s.y === food.y) ||
+          obstacles.some((o) => food.x >= o.x && food.x < o.x + o.w && food.y >= o.y && food.y < o.y + o.h)
+        );
+        if (foodRect) foodRect.destroy();
+        foodRect = this.add.rectangle(
+          food.x * segmentSize + segmentSize / 2,
+          food.y * segmentSize + segmentSize / 2,
+          segmentSize,
+          segmentSize,
+          0xff4444
+        ).setDepth(1);
+      }
+
+      function update(_, delta) {
+        elapsed += delta / 1000;
+        const interval = 1 / speed;
+        if (elapsed >= interval) {
+          move.call(this);
+          elapsed = 0;
+        }
+      }
+
+      function move() {
+        if (pendingDir) {
+          dir = pendingDir;
+          pendingDir = null;
+        }
+
+        let newHead = {
+          x: snake[0].x + dir.x,
+          y: snake[0].y + dir.y,
+        };
+
+        const maxX = Math.floor(this.scale.width / segmentSize);
+        const maxY = Math.floor(this.scale.height / segmentSize);
+
+        if (newHead.x < 0) newHead.x = maxX - 1;
+        else if (newHead.x >= maxX) newHead.x = 0;
+        if (newHead.y < 0) newHead.y = maxY - 1;
+        else if (newHead.y >= maxY) newHead.y = 0;
+
+        if (snake.some((s) => s.x === newHead.x && s.y === newHead.y)) return gameOver.call(this);
+        if (
+          obstacles.some(
+            (o) => newHead.x >= o.x && newHead.x < o.x + o.w && newHead.y >= o.y && newHead.y < o.y + o.h
+          )
+        )
+          return gameOver.call(this);
+
+        snake.unshift(newHead);
+
+        const segment = this.add.rectangle(
+          newHead.x * segmentSize + segmentSize / 2,
+          newHead.y * segmentSize + segmentSize / 2,
+          segmentSize,
+          segmentSize,
+          0x33ff33
+        );
+        this.snakeGroup.add(segment);
+
+        if (newHead.x === food.x && newHead.y === food.y) {
+          eaten++;
+          speed += 0.3;
+          placeFood.call(this);
+
+          if (eaten >= foodsToNextLevel) {
+            level++;
+            resetGame.call(this);
+          }
+        } else {
+          this.snakeGroup.getChildren()[this.snakeGroup.getLength() - 1].destroy();
+          snake.pop();
+        }
+        drawScene.call(this);
+      }
+
+      function drawScene() {
+        if (!this.graphics) return;
+
+        this.graphics.clear();
+        this.graphics.lineStyle(2, 0xffffff);
+        this.graphics.strokeRect(0, 0, this.scale.width, this.scale.height);
+
+        this.graphics.lineStyle(1, 0x333333, 0.5);
+        for (let x = 0; x < this.scale.width; x += segmentSize * 2) {
+          this.graphics.beginPath();
+          this.graphics.moveTo(x, 0);
+          this.graphics.lineTo(x, this.scale.height);
+          this.graphics.strokePath();
+        }
+        for (let y = 0; y < this.scale.height; y += segmentSize * 2) {
+          this.graphics.beginPath();
+          this.graphics.moveTo(0, y);
+          this.graphics.lineTo(this.scale.width, y);
+          this.graphics.strokePath();
+        }
+
+        obstacles.forEach((o) => {
+          this.graphics.fillStyle(0x555555, 1);
+          this.graphics.fillRect(o.x * segmentSize, o.y * segmentSize, o.w * segmentSize, o.h * segmentSize);
+        });
+      }
+
+      function gameOver() {
+        resetGame.call(this);
+      }
+    }
+
+    launchGame();
+  </script>
+</body>
+</html>
